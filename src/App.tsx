@@ -150,8 +150,8 @@ const Navbar = () => {
             <BookOpen className="text-paper w-6 h-6" />
           </div>
           <div className="hidden sm:block">
-            <h1 className="text-lg font-serif leading-none tracking-tight">Factory Biodiversity</h1>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-muted mt-1">Storybooks Library</p>
+            <h1 className="text-lg font-serif leading-none tracking-tight">Sustainable Aviation</h1>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-muted mt-1">Learning Library</p>
           </div>
         </Link>
 
@@ -210,7 +210,7 @@ const Home = () => {
             Premium Digital Collection
           </span>
           <h2 className="text-5xl md:text-7xl font-serif mb-8 leading-[1.1]">
-            Biodiversity in the <br />
+            Sustainability in the <br />
             <span className="italic">Industrial Landscape</span>
           </h2>
           <p className="text-lg text-muted mb-12 max-w-xl mx-auto leading-relaxed">
@@ -239,7 +239,7 @@ const Home = () => {
 
       <footer className="py-12 border-t border-ink/5 px-6">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 text-xs uppercase tracking-widest text-muted">
-          <p>© 2026 Factory Biodiversity Storybooks Library</p>
+          <p>© 2026 Sustainable Aviation Learning Library</p>
           <div className="flex gap-8">
             <a href="#" className="hover:text-accent transition-colors">
               Technical Standards
@@ -265,7 +265,7 @@ const Library = ({ lang }: { lang: 'es' | 'en' }) => {
             {lang === 'es' ? 'Biblioteca Digital' : 'Digital Library'}
           </h2>
           <p className="text-muted uppercase tracking-widest text-sm">
-            {lang === 'es' ? '12 Títulos sobre Biodiversidad Industrial' : '12 Titles on Industrial Biodiversity'}
+            {lang === 'es' ? '12 recursos sobre sostenibilidad industrial' : '12 resources on industrial sustainability'}
           </p>
         </header>
 

@@ -1,532 +1,222 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { HashRouter, Routes, Route, Link, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence } from 'motion/react';
-import {
-  BookOpen,
-  ChevronLeft,
-  ChevronRight,
-  Grid,
-  Layout as LayoutIcon,
-  ArrowLeft,
-  Globe,
-  Menu,
-  X,
-  Maximize2,
-  Minimize2,
-  Loader2,
-  FileWarning
-} from 'lucide-react';
-import { ALL_STORYBOOKS, SPANISH_STORYBOOKS, ENGLISH_STORYBOOKS } from './constants';
-
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { HashRouter, Link, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react';
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, Download, Grid2X2, Languages, Maximize2, Minimize2, X } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import { ALL_STORYBOOKS, ENGLISH_STORYBOOKS, SPANISH_STORYBOOKS, type Storybook } from './constants';
+import { getNativeStorybook } from './nativeStorybooks';
+import './index.css';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
 
-const getAssetUrl = (path: string) => {
-  const base = import.meta.env.BASE_URL.endsWith('/')
-    ? import.meta.env.BASE_URL
-    : `${import.meta.env.BASE_URL}/`;
-  const cleanPath = path.startsWith('/') ? path.slice(1) : path;
-  return `${base}${cleanPath}`;
+const assetUrl = (path: string) => {
+  const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
+  return `${base}${path.startsWith('/') ? path.slice(1) : path}`;
 };
 
-const PDFPage = ({
-  pdf,
-  pageNumber,
-  scale = 1.5,
-  className = '',
-  onLoad,
-}: {
-  pdf: any | null;
-  pageNumber: number;
-  scale?: number;
-  className?: string;
-  onLoad?: () => void;
-}) => {
+type PdfDoc = Awaited<ReturnType<typeof pdfjs.getDocument>['promise']>;
+
+type UiLabels = {
+  back: string;
+  index: string;
+  fullscreen: string;
+  download: string;
+  start: string;
+  section: string;
+  sections: string;
+  interactive: string;
+  collection: string;
+  library: string;
+  libraryIntro: string;
+  homeKicker: string;
+  homeTitle: string;
+  homeEm: string;
+  homeCopy: string;
+};
+
+const ui: Record<'es' | 'en', UiLabels> = {
+  es: {
+    back: 'Volver a biblioteca', index: 'Índice', fullscreen: 'Pantalla completa', download: 'Descargar PDF',
+    start: 'Comenzar lectura', section: 'Sección', sections: 'secciones', interactive: 'LIBRO DIGITAL INTERACTIVO',
+    collection: 'COLECCIÓN EN ESPAÑOL', library: 'Biblioteca digital', libraryIntro: 'Explora 12 storybooks ilustrados en formato digital interactivo.',
+    homeKicker: 'COLECCIÓN DE STORYBOOKS DIGITALES', homeTitle: 'Historias para un paisaje industrial', homeEm: 'más consciente.',
+    homeCopy: 'Una biblioteca visual y bilingüe para aprender sostenibilidad desde situaciones industriales reales.',
+  },
+  en: {
+    back: 'Back to library', index: 'Contents', fullscreen: 'Fullscreen', download: 'Download PDF',
+    start: 'Start reading', section: 'Section', sections: 'sections', interactive: 'INTERACTIVE DIGITAL BOOK',
+    collection: 'ENGLISH COLLECTION', library: 'Digital library', libraryIntro: 'Explore 12 illustrated storybooks as native interactive digital publications.',
+    homeKicker: 'DIGITAL STORYBOOK COLLECTION', homeTitle: 'Stories for a more thoughtful', homeEm: 'industrial landscape.',
+    homeCopy: 'A bilingual visual library for learning sustainability through real industrial situations.',
+  },
+};
+
+function PdfCrop({ pdf, page, side, className = '' }: { pdf: PdfDoc | null; page: number; side: 'left' | 'right'; className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const renderTaskRef = useRef<any>(null);
-
   useEffect(() => {
-    const renderPage = async () => {
+    let cancelled = false;
+    let task: any;
+    (async () => {
       if (!pdf || !canvasRef.current) return;
+      const sourcePage = await pdf.getPage(page);
+      const scale = Math.max(1.15, Math.min(2, window.devicePixelRatio || 1));
+      const viewport = sourcePage.getViewport({ scale });
+      const source = document.createElement('canvas');
+      source.width = Math.ceil(viewport.width);
+      source.height = Math.ceil(viewport.height);
+      const sourceCtx = source.getContext('2d');
+      if (!sourceCtx) return;
+      task = sourcePage.render({ canvasContext: sourceCtx, viewport });
+      await task.promise;
+      if (cancelled || !canvasRef.current) return;
+      const cropX = side === 'right' ? Math.floor(source.width / 2) : 0;
+      const cropW = Math.ceil(source.width / 2);
+      const target = canvasRef.current;
+      target.width = cropW;
+      target.height = source.height;
+      target.getContext('2d')?.drawImage(source, cropX, 0, cropW, source.height, 0, 0, cropW, source.height);
+    })().catch((err) => { if (err?.name !== 'RenderingCancelledException') console.error(err); });
+    return () => { cancelled = true; task?.cancel?.(); };
+  }, [pdf, page, side]);
+  return <canvas ref={canvasRef} className={className} />;
+}
 
-      try {
-        if (renderTaskRef.current) {
-          renderTaskRef.current.cancel();
-        }
-
-        const page = await pdf.getPage(pageNumber);
-        const viewport = page.getViewport({ scale: scale * window.devicePixelRatio });
-        const canvas = canvasRef.current;
-        const context = canvas.getContext('2d');
-
-        if (!context) return;
-
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-        canvas.style.width = `${viewport.width / window.devicePixelRatio}px`;
-        canvas.style.height = `${viewport.height / window.devicePixelRatio}px`;
-
-        const renderContext = {
-          canvasContext: context,
-          viewport: viewport,
-        };
-
-        renderTaskRef.current = page.render(renderContext);
-        await renderTaskRef.current.promise;
-        if (onLoad) onLoad();
-      } catch (err: any) {
-        if (err.name !== 'RenderingCancelledException') {
-          console.error('Error rendering page:', err);
-        }
-      }
-    };
-
-    renderPage();
-
-    return () => {
-      if (renderTaskRef.current) {
-        renderTaskRef.current.cancel();
-      }
-    };
-  }, [pdf, pageNumber, scale, onLoad]);
-
-  return <canvas ref={canvasRef} className={`max-w-full h-auto shadow-lg bg-white ${className}`} />;
-};
-
-const PDFCover = ({ pdfPath, title }: { pdfPath: string; title: string }) => {
-  const [pdf, setPdf] = useState<any | null>(null);
-  const [error, setError] = useState(false);
-  const [loading, setLoading] = useState(true);
-
+function LazyPdfCover({ book }: { book: Storybook }) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [pdf, setPdf] = useState<PdfDoc | null>(null);
   useEffect(() => {
-    const loadPdf = async () => {
-      try {
-        const loadingTask = pdfjs.getDocument(getAssetUrl(pdfPath));
-        const doc = await loadingTask.promise;
-        setPdf(doc);
-        setLoading(false);
-      } catch (err) {
-        console.error('Error loading PDF for cover:', err);
-        setError(true);
-        setLoading(false);
-      }
-    };
-    loadPdf();
-  }, [pdfPath]);
+    const host = hostRef.current;
+    if (!host) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); observer.disconnect(); }
+    }, { rootMargin: '320px' });
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!visible) return;
+    const task = pdfjs.getDocument(assetUrl(book.pdfPath));
+    task.promise.then(setPdf).catch(console.error);
+    return () => { task.destroy(); };
+  }, [book.pdfPath, visible]);
+  return <div ref={hostRef} className="book-art">{pdf ? <PdfCrop pdf={pdf} page={1} side="right" className="cover-crop"/> : <div className="cover-loading"><BookOpen/></div>}</div>;
+}
 
-  if (error) {
-    return (
-      <div className="aspect-[2/3] bg-accent/10 flex flex-col items-center justify-center p-6 text-center border border-accent/20">
-        <FileWarning className="w-8 h-8 mb-2 text-accent/40" />
-        <p className="text-[10px] uppercase tracking-tighter text-accent/60 leading-tight">{title}</p>
-      </div>
-    );
-  }
+function Shell({ children }: { children: React.ReactNode }) {
+  return <div className="site-shell"><header className="site-header"><Link to="/" className="brand"><BookOpen /><span>Sustainable Aviation<small>Learning Library</small></span></Link><nav><Link to="/es">ES</Link><Link to="/en">EN</Link></nav></header>{children}</div>;
+}
 
-  return (
-    <div className="relative aspect-[2/3] bg-ink/5 overflow-hidden">
-      {loading ? (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Loader2 className="w-6 h-6 animate-spin text-accent/20" />
-        </div>
-      ) : (
-        <PDFPage pdf={pdf} pageNumber={1} scale={0.5} className="w-full h-full object-cover" />
-      )}
-    </div>
-  );
-};
+function Home() {
+  const t = ui.es;
+  return <Shell><main className="home"><p className="kicker">{t.homeKicker}</p><h1>{t.homeTitle}<br/><em>{t.homeEm}</em></h1><p>{t.homeCopy}</p><div><Link className="button primary" to="/es">Biblioteca ES <ChevronRight/></Link><Link className="button ghost" to="/en">Library EN</Link></div></main></Shell>;
+}
 
-const Navbar = () => {
-  const [isOpen, setIsOpen] = useState(false);
-  const location = useLocation();
+function LibraryCard({ book }: { book: Storybook }) {
+  const t = ui[book.language];
+  return <Link to={`/book/${book.id}`} className="book-card featured">
+    <LazyPdfCover book={book}/>
+    <div className="book-meta"><p>{t.interactive}</p><h2>{book.title}</h2><strong>Almudena Urbieta</strong></div>
+  </Link>;
+}
 
-  return (
-    <nav className="fixed top-0 left-0 w-full z-50 bg-paper/80 backdrop-blur-md border-b border-ink/5">
-      <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 bg-accent flex items-center justify-center rounded-sm transition-transform group-hover:scale-105">
-            <BookOpen className="text-paper w-6 h-6" />
-          </div>
-          <div className="hidden sm:block">
-            <h1 className="text-lg font-serif leading-none tracking-tight">Sustainable Aviation</h1>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-muted mt-1">Learning Library</p>
-          </div>
-        </Link>
-
-        <div className="hidden md:flex items-center gap-8">
-          <Link
-            to="/es"
-            className={`text-sm uppercase tracking-widest hover:text-accent transition-colors ${location.pathname === '/es' ? 'text-accent font-semibold' : 'text-muted'}`}
-          >
-            Biblioteca ES
-          </Link>
-          <Link
-            to="/en"
-            className={`text-sm uppercase tracking-widest hover:text-accent transition-colors ${location.pathname === '/en' ? 'text-accent font-semibold' : 'text-muted'}`}
-          >
-            Library EN
-          </Link>
-        </div>
-
-        <button onClick={() => setIsOpen(!isOpen)} className="md:hidden p-2">
-          {isOpen ? <X /> : <Menu />}
-        </button>
-      </div>
-
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="md:hidden absolute top-20 left-0 w-full bg-paper border-b border-ink/5 px-6 py-8 flex flex-col gap-6 shadow-xl"
-          >
-            <Link to="/es" onClick={() => setIsOpen(false)} className="text-xl font-serif">
-              Biblioteca Español
-            </Link>
-            <Link to="/en" onClick={() => setIsOpen(false)} className="text-xl font-serif">
-              Library English
-            </Link>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </nav>
-  );
-};
-
-const Home = () => {
-  return (
-    <div className="min-h-screen pt-20 flex flex-col">
-      <section className="flex-1 flex flex-col items-center justify-center px-6 py-20 text-center">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-          className="max-w-3xl"
-        >
-          <span className="text-xs uppercase tracking-[0.3em] text-accent font-semibold mb-6 block">
-            Premium Digital Collection
-          </span>
-          <h2 className="text-5xl md:text-7xl font-serif mb-8 leading-[1.1]">
-            Sustainability in the <br />
-            <span className="italic">Industrial Landscape</span>
-          </h2>
-          <p className="text-lg text-muted mb-12 max-w-xl mx-auto leading-relaxed">
-            Explore our curated library of technical storybooks detailing the coexistence of industry and
-            nature. Available in Spanish and English.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-6 justify-center">
-            <Link
-              to="/es"
-              className="px-10 py-4 bg-accent text-paper rounded-sm hover:bg-accent/90 transition-all flex items-center justify-center gap-3 group"
-            >
-              Biblioteca Español
-              <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </Link>
-            <Link
-              to="/en"
-              className="px-10 py-4 border border-accent text-accent rounded-sm hover:bg-accent/5 transition-all flex items-center justify-center gap-3 group"
-            >
-              Library English
-              <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-            </Link>
-          </div>
-        </motion.div>
-      </section>
-
-      <footer className="py-12 border-t border-ink/5 px-6">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6 text-xs uppercase tracking-widest text-muted">
-          <p>© 2026 Sustainable Aviation Learning Library</p>
-          <div className="flex gap-8">
-            <a href="#" className="hover:text-accent transition-colors">
-              Technical Standards
-            </a>
-            <a href="#" className="hover:text-accent transition-colors">
-              Sustainability
-            </a>
-          </div>
-        </div>
-      </footer>
-    </div>
-  );
-};
-
-const Library = ({ lang }: { lang: 'es' | 'en' }) => {
+function Library({ lang }: { lang: 'es' | 'en' }) {
   const books = lang === 'es' ? SPANISH_STORYBOOKS : ENGLISH_STORYBOOKS;
+  const t = ui[lang];
+  return <Shell><main className="library"><header><p className="kicker">{t.collection}</p><h1>{t.library}</h1><p>{t.libraryIntro}</p></header><section className="book-grid">{books.map(book => <LibraryCard book={book} key={book.id}/>)}</section></main></Shell>;
+}
 
-  return (
-    <div className="min-h-screen pt-32 pb-20 px-6">
-      <div className="max-w-7xl mx-auto">
-        <header className="mb-16">
-          <h2 className="text-4xl md:text-5xl font-serif mb-4">
-            {lang === 'es' ? 'Biblioteca Digital' : 'Digital Library'}
-          </h2>
-          <p className="text-muted uppercase tracking-widest text-sm">
-            {lang === 'es' ? '12 recursos sobre sostenibilidad industrial' : '12 resources on industrial sustainability'}
-          </p>
-        </header>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-8 gap-y-16">
-          {books.map((book, idx) => (
-            <motion.div
-              key={book.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
-            >
-              <Link to={`/book/${book.id}`} className="group block">
-                <div className="aspect-[2/3] overflow-hidden bg-ink/5 mb-6 relative shadow-sm group-hover:shadow-xl transition-all duration-500">
-                  <PDFCover pdfPath={book.pdfPath} title={book.title} />
-                  <div className="absolute inset-0 bg-accent/0 group-hover:bg-accent/10 transition-colors duration-300" />
-                </div>
-                <h3 className="text-xl font-serif leading-tight mb-2 group-hover:text-accent transition-colors">
-                  {book.title}
-                </h3>
-                <p className="text-xs uppercase tracking-widest text-muted">
-                  {lang === 'es' ? 'Leer PDF' : 'Read PDF'}
-                </p>
-              </Link>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const StorybookViewer = () => {
-  const { id } = useParams();
+function NativeReader({ book }: { book: Storybook }) {
   const navigate = useNavigate();
-  const [currentPage, setCurrentPage] = useState(1);
-  const [viewMode, setViewMode] = useState<'single' | 'continuous'>('single');
-  const [showThumbnails, setShowThumbnails] = useState(false);
-  const [pdf, setPdf] = useState<any | null>(null);
-  const [numPages, setNumPages] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const book = useMemo(() => ALL_STORYBOOKS.find((b) => b.id === id), [id]);
-  const bilingualPair = useMemo(
-    () => (book?.bilingualPairId ? ALL_STORYBOOKS.find((b) => b.id === book.bilingualPairId) : null),
-    [book]
-  );
+  const rootRef = useRef<HTMLDivElement>(null);
+  const touch = useRef<{x:number;y:number}|null>(null);
+  const hideTimer = useRef<number|null>(null);
+  const reduced = useReducedMotion();
+  const native = getNativeStorybook(book.slug);
+  const t = ui[book.language];
+  const [pdf, setPdf] = useState<PdfDoc | null>(null);
+  const [opened, setOpened] = useState(false);
+  const [chapter, setChapter] = useState(0);
+  const [overview, setOverview] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [controls, setControls] = useState(true);
+  const [direction, setDirection] = useState(1);
+  const chapters = native.chapters;
+  const pair = useMemo(() => ALL_STORYBOOKS.find(x => x.id === book.bilingualPairId), [book.bilingualPairId]);
 
   useEffect(() => {
-    const loadPdf = async () => {
-      if (!book) return;
-      setLoading(true);
-      setError(null);
-      setCurrentPage(1);
+    const task = pdfjs.getDocument(assetUrl(book.pdfPath));
+    task.promise.then(setPdf).catch(console.error);
+    return () => { task.destroy(); };
+  }, [book.pdfPath]);
 
-      try {
-        const loadingTask = pdfjs.getDocument(getAssetUrl(book.pdfPath));
-        const doc = await loadingTask.promise;
-        setPdf(doc);
-        setNumPages(doc.numPages);
-        setLoading(false);
-      } catch (err) {
-        console.error('Error loading PDF:', err);
-        setError('No se pudo cargar el archivo PDF. Asegúrate de que existe en public/pdfs/');
-        setLoading(false);
-      }
+  useEffect(() => {
+    const f = () => setFullscreen(document.fullscreenElement === rootRef.current);
+    document.addEventListener('fullscreenchange', f);
+    return () => document.removeEventListener('fullscreenchange', f);
+  }, []);
+
+  const reveal = useCallback(() => {
+    setControls(true);
+    if (hideTimer.current) window.clearTimeout(hideTimer.current);
+    if (opened && !overview) hideTimer.current = window.setTimeout(() => setControls(false), 2800);
+  }, [opened, overview]);
+
+  useEffect(() => { reveal(); return () => { if (hideTimer.current) window.clearTimeout(hideTimer.current); }; }, [reveal]);
+
+  const go = useCallback((n:number) => {
+    const target = Math.max(0, Math.min(chapters.length - 1, n));
+    setDirection(target >= chapter ? 1 : -1);
+    setChapter(target);
+    window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
+  }, [chapter, chapters.length, reduced]);
+  const next = useCallback(() => go(chapter + 1), [chapter, go]);
+  const prev = useCallback(() => go(chapter - 1), [chapter, go]);
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (!opened) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); next(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+      if (e.key === 'Escape') setOverview(false);
     };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [next, opened, prev]);
 
-    loadPdf();
+  const toggleFullscreen = async () => {
+    if (!rootRef.current) return;
+    document.fullscreenElement ? await document.exitFullscreen() : await rootRef.current.requestFullscreen();
+  };
 
-    return () => {
-      if (pdf) pdf.destroy();
-    };
-  }, [id, book]);
+  const current = chapters[chapter];
+  const transition = reduced ? {duration:0} : {duration:.45,ease:[.22,1,.36,1] as [number,number,number,number]};
+  const dense = current.paragraphs.join(' ').length > 780;
 
-  if (!book) return <div className="pt-40 text-center font-serif text-2xl">Book not found</div>;
+  return <div ref={rootRef} className={`premium-reader ${opened?'reading':'opening'} ${controls?'show-controls':'hide-controls'}`} onPointerMove={reveal} onPointerDown={reveal}>
+    {!opened ? <main className="opening-stage">
+      <motion.div className="opening-cover" initial={reduced?false:{opacity:0,y:18}} animate={{opacity:1,y:0}} transition={transition}><PdfCrop pdf={pdf} page={1} side="right" className="cover-crop"/></motion.div>
+      <motion.div className="opening-copy" initial={reduced?false:{opacity:0,y:16}} animate={{opacity:1,y:0}} transition={{...transition,delay:reduced?0:.1}}><p className="author">{native.author}</p><h1>{native.title}</h1><button className="button primary" onClick={()=>setOpened(true)}>{t.start} <ChevronRight/></button><a href={assetUrl(book.pdfPath)} download>{t.download}</a></motion.div>
+    </main> : <>
+      <header className="floating-tools"><button onClick={()=>navigate(`/${book.language}`)} aria-label={t.back}><ArrowLeft/></button><div>{pair&&<Link to={`/book/${pair.id}`} aria-label={pair.language==='en'?'English edition':'Edición en español'}><Languages/><span>{pair.language.toUpperCase()}</span></Link>}<button onClick={()=>setOverview(true)} aria-label={t.index}><Grid2X2/></button><button onClick={toggleFullscreen} aria-label={t.fullscreen}>{fullscreen?<Minimize2/>:<Maximize2/>}</button><a href={assetUrl(book.pdfPath)} download aria-label={t.download}><Download/></a></div></header>
+      <main className="reading-stage" onTouchStart={e=>{touch.current={x:e.changedTouches[0].clientX,y:e.changedTouches[0].clientY};}} onTouchEnd={e=>{if(!touch.current)return;const dx=e.changedTouches[0].clientX-touch.current.x,dy=e.changedTouches[0].clientY-touch.current.y;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.25)(dx<0?next:prev)();touch.current=null;}}>
+        <AnimatePresence mode="wait" initial={false}><motion.article key={`${book.slug}-${current.number}`} className={`chapter ${current.layout}`} initial={reduced?{opacity:1}:{opacity:0,x:direction>0?24:-24,y:4}} animate={{opacity:1,x:0,y:0}} exit={reduced?{opacity:1}:{opacity:0,x:direction>0?-18:18,y:-2}} transition={transition}><figure><PdfCrop pdf={pdf} page={current.number+1} side="left" className="chapter-crop"/></figure><div className={`chapter-copy ${dense?'dense':''}`}><p className="chapter-number">{t.section} {String(current.number).padStart(2,'0')} · {chapters.length}</p><h1>{current.title}</h1>{current.paragraphs.map((p,i)=><p key={`${current.number}-${i}`}>{p}</p>)}</div></motion.article></AnimatePresence>
+        <button className="nav-zone prev" onClick={prev} disabled={chapter===0} aria-label="Previous"><ChevronLeft/></button><button className="nav-zone next" onClick={next} disabled={chapter===chapters.length-1} aria-label="Next"><ChevronRight/></button>
+      </main><footer className="progress"><span>{chapter+1} / {chapters.length}</span><div><i style={{width:`${((chapter+1)/chapters.length)*100}%`}}/></div></footer></>}
+    <AnimatePresence>{overview&&<motion.div className="overview-backdrop" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><button className="overview-dismiss" onClick={()=>setOverview(false)} aria-label="Close"/><motion.section className="overview" initial={reduced?false:{opacity:0,y:18}} animate={{opacity:1,y:0}} exit={{opacity:0,y:12}} transition={transition}><header><div><p className="kicker">{t.index.toUpperCase()}</p><h2>{chapters.length} {t.sections}</h2></div><button onClick={()=>setOverview(false)}><X/></button></header><div className="overview-grid">{chapters.map((c,i)=><button key={c.number} className={i===chapter?'selected':''} onClick={()=>{go(i);setOverview(false);setOpened(true);}}><PdfCrop pdf={pdf} page={c.number+1} side="left" className="thumb-crop"/><span><small>{String(c.number).padStart(2,'0')}</small>{c.title}</span></button>)}</div></motion.section></motion.div>}</AnimatePresence>
+  </div>;
+}
 
-  const nextPage = () => setCurrentPage((prev) => Math.min(prev + 1, numPages));
-  const prevPage = () => setCurrentPage((prev) => Math.max(prev - 1, 1));
-
-  return (
-    <div className="min-h-screen bg-[#111] text-paper pt-20 flex flex-col">
-      <div className="h-16 px-6 border-b border-paper/10 flex items-center justify-between bg-black/40 backdrop-blur-sm sticky top-0 z-50">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => navigate(book.language === 'es' ? '/es' : '/en')}
-            className="flex items-center gap-2 text-xs uppercase tracking-widest hover:text-accent transition-colors"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline">{book.language === 'es' ? 'Biblioteca' : 'Library'}</span>
-          </button>
-          <div className="w-px h-4 bg-paper/20 hidden sm:block" />
-          <h2 className="text-sm font-serif truncate max-w-[120px] md:max-w-md">{book.title}</h2>
-        </div>
-
-        <div className="flex items-center gap-2 sm:gap-6">
-          {bilingualPair && (
-            <Link
-              to={`/book/${bilingualPair.id}`}
-              className="flex items-center gap-2 text-[10px] uppercase tracking-widest bg-accent/20 text-accent border border-accent/30 px-3 py-1.5 rounded-sm hover:bg-accent/30 transition-colors"
-            >
-              <Globe className="w-3 h-3" />
-              {bilingualPair.language === 'es' ? 'Versión Español' : 'English Version'}
-            </Link>
-          )}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setViewMode('single')}
-              className={`p-2 rounded-sm transition-colors ${viewMode === 'single' ? 'bg-accent text-paper' : 'hover:bg-paper/10'}`}
-              title="Single Page"
-            >
-              <LayoutIcon className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setViewMode('continuous')}
-              className={`p-2 rounded-sm transition-colors ${viewMode === 'continuous' ? 'bg-accent text-paper' : 'hover:bg-paper/10'}`}
-              title="Continuous View"
-            >
-              <Grid className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex-1 relative overflow-hidden flex">
-        <AnimatePresence>
-          {showThumbnails && (
-            <motion.div
-              initial={{ x: -250 }}
-              animate={{ x: 0 }}
-              exit={{ x: -250 }}
-              className="w-60 bg-black/60 border-r border-paper/10 overflow-y-auto scrollbar-hide p-4 flex flex-col gap-4 z-20"
-            >
-              {Array.from({ length: numPages }).map((_, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => {
-                    setCurrentPage(idx + 1);
-                    if (viewMode === 'single') setShowThumbnails(false);
-                  }}
-                  className={`relative aspect-[2/3] border-2 transition-all ${currentPage === idx + 1 ? 'border-accent' : 'border-transparent hover:border-paper/30'}`}
-                >
-                  <PDFPage pdf={pdf} pageNumber={idx + 1} scale={0.3} className="w-full h-full object-cover" />
-                  <span className="absolute bottom-1 right-1 bg-black/60 text-[10px] px-1 rounded">{idx + 1}</span>
-                </button>
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        <div className="flex-1 overflow-y-auto scrollbar-hide relative bg-black flex flex-col items-center">
-          <button
-            onClick={() => setShowThumbnails(!showThumbnails)}
-            className="absolute top-4 left-4 z-30 p-2 bg-black/60 hover:bg-black/80 rounded-sm transition-colors"
-          >
-            {showThumbnails ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-          </button>
-
-          {loading ? (
-            <div className="flex-1 flex flex-col items-center justify-center gap-4">
-              <Loader2 className="w-12 h-12 animate-spin text-accent" />
-              <p className="text-xs uppercase tracking-widest opacity-50">Cargando Storybook...</p>
-            </div>
-          ) : error ? (
-            <div className="flex-1 flex flex-col items-center justify-center p-12 text-center gap-6">
-              <FileWarning className="w-16 h-16 text-red-500/50" />
-              <div className="max-w-md">
-                <h3 className="text-xl font-serif mb-2">Error de Lectura</h3>
-                <p className="text-sm opacity-60 leading-relaxed">{error}</p>
-              </div>
-              <button
-                onClick={() => navigate(-1)}
-                className="px-6 py-2 border border-paper/20 rounded-sm hover:bg-paper/10 transition-colors text-xs uppercase tracking-widest"
-              >
-                Volver
-              </button>
-            </div>
-          ) : viewMode === 'single' ? (
-            <div className="flex-1 w-full flex items-center justify-center p-4 md:p-12 relative">
-              <div className="relative max-h-full max-w-full shadow-2xl">
-                <AnimatePresence mode="wait">
-                  <motion.div
-                    key={currentPage}
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="flex justify-center"
-                  >
-                    <PDFPage pdf={pdf} pageNumber={currentPage} scale={1.5} />
-                  </motion.div>
-                </AnimatePresence>
-
-                <button
-                  onClick={prevPage}
-                  disabled={currentPage === 1}
-                  className="absolute left-0 top-0 w-1/4 h-full cursor-w-resize group flex items-center justify-start pl-4"
-                >
-                  <div className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:hidden">
-                    <ChevronLeft className="w-6 h-6" />
-                  </div>
-                </button>
-
-                <button
-                  onClick={nextPage}
-                  disabled={currentPage === numPages}
-                  className="absolute right-0 top-0 w-1/4 h-full cursor-e-resize group flex items-center justify-end pr-4"
-                >
-                  <div className="w-10 h-10 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity disabled:hidden">
-                    <ChevronRight className="w-6 h-6" />
-                  </div>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="max-w-4xl w-full p-6 md:p-12 flex flex-col gap-12">
-              {Array.from({ length: numPages }).map((_, idx) => (
-                <div key={idx} className="shadow-2xl flex flex-col items-center">
-                  <PDFPage pdf={pdf} pageNumber={idx + 1} scale={1.5} />
-                  <p className="text-center mt-4 text-[10px] text-muted uppercase tracking-widest">Página {idx + 1}</p>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {!loading && !error && viewMode === 'single' && (
-        <div className="h-16 px-6 border-t border-paper/10 flex items-center justify-center gap-8 bg-black/40 backdrop-blur-sm">
-          <button
-            onClick={prevPage}
-            disabled={currentPage === 1}
-            className="p-2 hover:bg-paper/10 rounded-full transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-          >
-            <ChevronLeft className="w-6 h-6" />
-          </button>
-          <span className="text-xs uppercase tracking-[0.3em] font-medium">
-            {currentPage} / {numPages}
-          </span>
-          <button
-            onClick={nextPage}
-            disabled={currentPage === numPages}
-            className="p-2 hover:bg-paper/10 rounded-full transition-colors disabled:opacity-20 disabled:cursor-not-allowed"
-          >
-            <ChevronRight className="w-6 h-6" />
-          </button>
-        </div>
-      )}
-    </div>
-  );
-};
+function ReaderRoute() {
+  const { id } = useParams();
+  const book = ALL_STORYBOOKS.find(b => b.id === id);
+  if (!book) return <Shell><main className="fallback"><h1>Libro no encontrado</h1></main></Shell>;
+  const native = getNativeStorybook(book.slug);
+  if (!native) return <Shell><main className="fallback"><h1>{book.title}</h1><a className="button primary" href={assetUrl(book.pdfPath)} target="_blank" rel="noreferrer">PDF</a></main></Shell>;
+  return <NativeReader book={book}/>;
+}
 
 export default function App() {
-  return (
-    <HashRouter>
-      <Navbar />
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/es" element={<Library lang="es" />} />
-        <Route path="/en" element={<Library lang="en" />} />
-        <Route path="/book/:id" element={<StorybookViewer />} />
-      </Routes>
-    </HashRouter>
-  );
+  return <HashRouter><Routes><Route path="/" element={<Home/>}/><Route path="/es" element={<Library lang="es"/>}/><Route path="/en" element={<Library lang="en"/>}/><Route path="/book/:id" element={<ReaderRoute/>}/></Routes></HashRouter>;
 }

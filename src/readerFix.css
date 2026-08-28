@@ -1,0 +1,46 @@
+/* V5 approved readability fix: never crop chapter text on shorter desktop viewports. */
+@media (min-width: 701px) {
+  .premium-reader {
+    overflow: auto;
+  }
+
+  .reading-stage {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .chapter {
+    height: auto;
+    min-height: min(760px, 82vh);
+  }
+}
+
+@media (max-height: 900px) and (min-width: 701px) {
+  .reading-stage {
+    padding: 38px clamp(42px, 6vw, 86px);
+  }
+
+  .chapter {
+    min-height: calc(100vh - 76px);
+  }
+
+  .chapter-copy {
+    padding: 34px clamp(38px, 4vw, 58px);
+  }
+
+  .chapter-number {
+    margin-bottom: 12px;
+  }
+
+  .chapter-copy h1 {
+    font-size: clamp(30px, 2.7vw, 43px);
+    line-height: 1.04;
+    margin: 12px 0 17px;
+  }
+
+  .chapter-copy > p:not(.chapter-number) {
+    font-size: 15.5px;
+    line-height: 1.5;
+    margin-bottom: 7px;
+  }
+}

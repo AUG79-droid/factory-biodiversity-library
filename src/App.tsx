@@ -35,6 +35,11 @@ type UiLabels = {
   homeCopy: string;
 };
 
+const launchLanguage = (): 'es' | 'en' => {
+  if (typeof window === 'undefined') return 'es';
+  return new URLSearchParams(window.location.search).get('hubLang') === 'en' ? 'en' : 'es';
+};
+
 const ui: Record<'es' | 'en', UiLabels> = {
   es: {
     back: 'Volver a biblioteca', index: 'Índice', fullscreen: 'Pantalla completa', download: 'Descargar PDF',
@@ -104,13 +109,15 @@ function LazyPdfCover({ book }: { book: Storybook }) {
   return <div ref={hostRef} className="book-art">{pdf ? <PdfCrop pdf={pdf} page={1} side="right" className="cover-crop"/> : <div className="cover-loading"><BookOpen/></div>}</div>;
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="site-shell"><header className="site-header"><Link to="/" className="brand"><BookOpen /><span>Sustainable Aviation<small>Learning Library</small></span></Link><nav><Link to="/es">ES</Link><Link to="/en">EN</Link></nav></header>{children}</div>;
+function Shell({ children, lang = launchLanguage() }: { children: React.ReactNode; lang?: 'es' | 'en' }) {
+  return <div className="site-shell"><header className="site-header"><Link to="/" className="brand"><BookOpen /><span>{lang === 'es' ? 'Aviación Sostenible' : 'Sustainable Aviation'}<small>{lang === 'es' ? 'Biblioteca de Aprendizaje' : 'Learning Library'}</small></span></Link><nav><Link to="/es">ES</Link><Link to="/en">EN</Link></nav></header>{children}</div>;
 }
 
 function Home() {
-  const t = ui.es;
-  return <Shell><main className="home"><p className="kicker">{t.homeKicker}</p><h1>{t.homeTitle}<br/><em>{t.homeEm}</em></h1><p>{t.homeCopy}</p><div><Link className="button primary" to="/es">Biblioteca ES <ChevronRight/></Link><Link className="button ghost" to="/en">Library EN</Link></div></main></Shell>;
+  const lang = launchLanguage();
+  const t = ui[lang];
+  const other = lang === 'es' ? 'en' : 'es';
+  return <Shell lang={lang}><main className="home"><p className="kicker">{t.homeKicker}</p><h1>{t.homeTitle}<br/><em>{t.homeEm}</em></h1><p>{t.homeCopy}</p><div><Link className="button primary" to={`/${lang}`}>{lang === 'es' ? 'Biblioteca ES' : 'Library EN'} <ChevronRight/></Link><Link className="button ghost" to={`/${other}`}>{other === 'es' ? 'Biblioteca ES' : 'Library EN'}</Link></div></main></Shell>;
 }
 
 function LibraryCard({ book }: { book: Storybook }) {
@@ -124,7 +131,7 @@ function LibraryCard({ book }: { book: Storybook }) {
 function Library({ lang }: { lang: 'es' | 'en' }) {
   const books = lang === 'es' ? SPANISH_STORYBOOKS : ENGLISH_STORYBOOKS;
   const t = ui[lang];
-  return <Shell><main className="library"><header><p className="kicker">{t.collection}</p><h1>{t.library}</h1><p>{t.libraryIntro}</p></header><section className="book-grid">{books.map(book => <LibraryCard book={book} key={book.id}/>)}</section></main></Shell>;
+  return <Shell lang={lang}><main className="library"><header><p className="kicker">{t.collection}</p><h1>{t.library}</h1><p>{t.libraryIntro}</p></header><section className="book-grid">{books.map(book => <LibraryCard book={book} key={book.id}/>)}</section></main></Shell>;
 }
 
 function NativeReader({ book }: { book: Storybook }) {
@@ -211,9 +218,9 @@ function NativeReader({ book }: { book: Storybook }) {
 function ReaderRoute() {
   const { id } = useParams();
   const book = ALL_STORYBOOKS.find(b => b.id === id);
-  if (!book) return <Shell><main className="fallback"><h1>Libro no encontrado</h1></main></Shell>;
+  if (!book) { const lang = launchLanguage(); return <Shell lang={lang}><main className="fallback"><h1>{lang === 'es' ? 'Libro no encontrado' : 'Book not found'}</h1></main></Shell>; }
   const native = getNativeStorybook(book.slug);
-  if (!native) return <Shell><main className="fallback"><h1>{book.title}</h1><a className="button primary" href={assetUrl(book.pdfPath)} target="_blank" rel="noreferrer">PDF</a></main></Shell>;
+  if (!native) return <Shell lang={book.language}><main className="fallback"><h1>{book.title}</h1><a className="button primary" href={assetUrl(book.pdfPath)} target="_blank" rel="noreferrer">PDF</a></main></Shell>;
   return <NativeReader book={book}/>;
 }
 

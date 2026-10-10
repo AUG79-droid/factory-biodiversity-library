@@ -7,6 +7,7 @@ import { STORYBOOK_CHUNK_05 } from './storybooks/chunk-05';
 import { STORYBOOK_CHUNK_06 } from './storybooks/chunk-06';
 import { STORYBOOK_CHUNK_07 } from './storybooks/chunk-07';
 import { STORYBOOK_CHUNK_08 } from './storybooks/chunk-08';
+import { EDITORIAL_OVERRIDES } from './editorialOverrides';
 
 export const NATIVE_STORYBOOKS: Record<string, NativeStorybook> = {
   ...STORYBOOK_CHUNK_01,
@@ -19,4 +20,13 @@ export const NATIVE_STORYBOOKS: Record<string, NativeStorybook> = {
   ...STORYBOOK_CHUNK_08,
 };
 
-export const getNativeStorybook = (slug: string) => NATIVE_STORYBOOKS[slug];
+export const getNativeStorybook = (slug: string) => {
+  const storybook = NATIVE_STORYBOOKS[slug];
+  if (!storybook) return undefined;
+  const overrides = EDITORIAL_OVERRIDES[slug];
+  if (!overrides) return storybook;
+  return {
+    ...storybook,
+    chapters: storybook.chapters.map(chapter => ({ ...chapter, ...overrides[chapter.number] })),
+  };
+};

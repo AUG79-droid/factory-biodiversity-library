@@ -6,9 +6,21 @@ import * as pdfjs from 'pdfjs-dist';
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import { ALL_STORYBOOKS, ENGLISH_STORYBOOKS, SPANISH_STORYBOOKS, type Storybook } from './constants';
 import { getNativeStorybook } from './nativeStorybooks';
+import type { NativeStorybookChapter } from './nativeStorybooks.types';
 import './index.css';
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker;
+const LANGUAGE_KEY = 'sustainable-aviation-library-language';
+
+function rememberLanguage(lang: 'es' | 'en') {
+  document.documentElement.lang = lang;
+  try { localStorage.setItem(LANGUAGE_KEY, lang); } catch { /* Storage is optional. */ }
+  const url = new URL(window.location.href);
+  if (url.searchParams.get('hubLang') !== lang) {
+    url.searchParams.set('hubLang', lang);
+    window.history.replaceState(window.history.state, '', url);
+  }
+}
 
 const assetUrl = (path: string) => {
   const base = import.meta.env.BASE_URL.endsWith('/') ? import.meta.env.BASE_URL : `${import.meta.env.BASE_URL}/`;
@@ -87,6 +99,13 @@ function PdfCrop({ pdf, page, side, className = '' }: { pdf: PdfDoc | null; page
   return <canvas ref={canvasRef} className={className} />;
 }
 
+function ChapterVisual({ chapter, pdf, alternatePdfs, className }: { chapter: NativeStorybookChapter; pdf: PdfDoc | null; alternatePdfs: Record<string, PdfDoc>; className: string }) {
+  const illustration = chapter.illustration;
+  if (illustration?.kind === 'image') return <img src={assetUrl(illustration.path)} alt="" className={className}/>;
+  if (illustration?.kind === 'pdf') return <PdfCrop pdf={alternatePdfs[illustration.slug] ?? null} page={illustration.chapter + 1} side="left" className={className}/>;
+  return <PdfCrop pdf={pdf} page={chapter.number + 1} side="left" className={className}/>;
+}
+
 function LazyPdfCover({ book }: { book: Storybook }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -131,6 +150,7 @@ function LibraryCard({ book }: { book: Storybook }) {
 function Library({ lang }: { lang: 'es' | 'en' }) {
   const books = lang === 'es' ? SPANISH_STORYBOOKS : ENGLISH_STORYBOOKS;
   const t = ui[lang];
+  useEffect(() => { rememberLanguage(lang); }, [lang]);
   return <Shell lang={lang}><main className="library"><header><p className="kicker">{t.collection}</p><h1>{t.library}</h1><p>{t.libraryIntro}</p></header><section className="book-grid">{books.map(book => <LibraryCard book={book} key={book.id}/>)}</section></main></Shell>;
 }
 
@@ -140,9 +160,11 @@ function NativeReader({ book }: { book: Storybook }) {
   const touch = useRef<{x:number;y:number}|null>(null);
   const hideTimer = useRef<number|null>(null);
   const reduced = useReducedMotion();
-  const native = getNativeStorybook(book.slug);
+  const native = useMemo(() => getNativeStorybook(book.slug)!, [book.slug]);
   const t = ui[book.language];
+  useEffect(() => { rememberLanguage(book.language); }, [book.language]);
   const [pdf, setPdf] = useState<PdfDoc | null>(null);
+  const [alternatePdfs, setAlternatePdfs] = useState<Record<string, PdfDoc>>({});
   const [opened, setOpened] = useState(false);
   const [chapter, setChapter] = useState(0);
   const [overview, setOverview] = useState(false);
@@ -157,6 +179,20 @@ function NativeReader({ book }: { book: Storybook }) {
     task.promise.then(setPdf).catch(console.error);
     return () => { task.destroy(); };
   }, [book.pdfPath]);
+
+  useEffect(() => {
+    const slugs = [...new Set(chapters.flatMap(item => item.illustration?.kind === 'pdf' ? [item.illustration.slug] : []))];
+    const tasks = slugs.map(slug => ({ slug, task: pdfjs.getDocument(assetUrl(`pdfs/${slug}.pdf`)) }));
+    let active = true;
+    Promise.all(tasks.map(async ({ slug, task }) => [slug, await task.promise] as const))
+      .then(entries => { if (active) setAlternatePdfs(Object.fromEntries(entries)); })
+      .catch(console.error);
+    return () => {
+      active = false;
+      tasks.forEach(({ task }) => task.destroy());
+      setAlternatePdfs({});
+    };
+  }, [chapters]);
 
   useEffect(() => {
     const f = () => setFullscreen(document.fullscreenElement === rootRef.current);
@@ -208,10 +244,10 @@ function NativeReader({ book }: { book: Storybook }) {
     </main> : <>
       <header className="floating-tools"><button onClick={()=>navigate(`/${book.language}`)} aria-label={t.back}><ArrowLeft/></button><div>{pair&&<Link to={`/book/${pair.id}`} aria-label={pair.language==='en'?'English edition':'Edición en español'}><Languages/><span>{pair.language.toUpperCase()}</span></Link>}<button onClick={()=>setOverview(true)} aria-label={t.index}><Grid2X2/></button><button onClick={toggleFullscreen} aria-label={t.fullscreen}>{fullscreen?<Minimize2/>:<Maximize2/>}</button><a href={assetUrl(book.pdfPath)} download aria-label={t.download}><Download/></a></div></header>
       <main className="reading-stage" onTouchStart={e=>{touch.current={x:e.changedTouches[0].clientX,y:e.changedTouches[0].clientY};}} onTouchEnd={e=>{if(!touch.current)return;const dx=e.changedTouches[0].clientX-touch.current.x,dy=e.changedTouches[0].clientY-touch.current.y;if(Math.abs(dx)>55&&Math.abs(dx)>Math.abs(dy)*1.25)(dx<0?next:prev)();touch.current=null;}}>
-        <AnimatePresence mode="wait" initial={false}><motion.article key={`${book.slug}-${current.number}`} className={`chapter ${current.layout}`} initial={reduced?{opacity:1}:{opacity:0,x:direction>0?24:-24,y:4}} animate={{opacity:1,x:0,y:0}} exit={reduced?{opacity:1}:{opacity:0,x:direction>0?-18:18,y:-2}} transition={transition}><figure><PdfCrop pdf={pdf} page={current.number+1} side="left" className="chapter-crop"/></figure><div className={`chapter-copy ${dense?'dense':''}`}><p className="chapter-number">{t.section} {String(current.number).padStart(2,'0')} · {chapters.length}</p><h1>{current.title}</h1>{current.paragraphs.map((p,i)=><p key={`${current.number}-${i}`}>{p}</p>)}</div></motion.article></AnimatePresence>
+        <AnimatePresence mode="wait" initial={false}><motion.article key={`${book.slug}-${current.number}`} className={`chapter ${current.layout}`} initial={reduced?{opacity:1}:{opacity:0,x:direction>0?24:-24,y:4}} animate={{opacity:1,x:0,y:0}} exit={reduced?{opacity:1}:{opacity:0,x:direction>0?-18:18,y:-2}} transition={transition}><figure><ChapterVisual chapter={current} pdf={pdf} alternatePdfs={alternatePdfs} className="chapter-crop"/></figure><div className={`chapter-copy ${dense?'dense':''}`}><p className="chapter-number">{t.section} {String(current.number).padStart(2,'0')} · {chapters.length}</p><h1>{current.title}</h1>{current.paragraphs.map((p,i)=><p key={`${current.number}-${i}`}>{p}</p>)}</div></motion.article></AnimatePresence>
         <button className="nav-zone prev" onClick={prev} disabled={chapter===0} aria-label="Previous"><ChevronLeft/></button><button className="nav-zone next" onClick={next} disabled={chapter===chapters.length-1} aria-label="Next"><ChevronRight/></button>
       </main><footer className="progress"><span>{chapter+1} / {chapters.length}</span><div><i style={{width:`${((chapter+1)/chapters.length)*100}%`}}/></div></footer></>}
-    <AnimatePresence>{overview&&<motion.div className="overview-backdrop" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><button className="overview-dismiss" onClick={()=>setOverview(false)} aria-label="Close"/><motion.section className="overview" initial={reduced?false:{opacity:0,y:18}} animate={{opacity:1,y:0}} exit={{opacity:0,y:12}} transition={transition}><header><div><p className="kicker">{t.index.toUpperCase()}</p><h2>{chapters.length} {t.sections}</h2></div><button onClick={()=>setOverview(false)}><X/></button></header><div className="overview-grid">{chapters.map((c,i)=><button key={c.number} className={i===chapter?'selected':''} onClick={()=>{go(i);setOverview(false);setOpened(true);}}><PdfCrop pdf={pdf} page={c.number+1} side="left" className="thumb-crop"/><span><small>{String(c.number).padStart(2,'0')}</small>{c.title}</span></button>)}</div></motion.section></motion.div>}</AnimatePresence>
+    <AnimatePresence>{overview&&<motion.div className="overview-backdrop" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}><button className="overview-dismiss" onClick={()=>setOverview(false)} aria-label="Close"/><motion.section className="overview" initial={reduced?false:{opacity:0,y:18}} animate={{opacity:1,y:0}} exit={{opacity:0,y:12}} transition={transition}><header><div><p className="kicker">{t.index.toUpperCase()}</p><h2>{chapters.length} {t.sections}</h2></div><button onClick={()=>setOverview(false)}><X/></button></header><div className="overview-grid">{chapters.map((c,i)=><button key={c.number} className={i===chapter?'selected':''} onClick={()=>{go(i);setOverview(false);setOpened(true);}}><ChapterVisual chapter={c} pdf={pdf} alternatePdfs={alternatePdfs} className="thumb-crop"/><span><small>{String(c.number).padStart(2,'0')}</small>{c.title}</span></button>)}</div></motion.section></motion.div>}</AnimatePresence>
   </div>;
 }
 
